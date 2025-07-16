@@ -1172,10 +1172,13 @@ func (c *Client) logStderr(name string, r io.Reader) {
 	reader := bufio.NewReaderSize(r, c.config.PluginLogBufferSize)
 	// continuation indicates the previous line was a prefix
 	continuation := false
-	// panic indicates the previous line was the start of a panic output
-	panic := false
+
+	// inPanic indicates we saw the start of a stack trace and should divert all
+	// remaining untagged lines to stderr
+	var inPanic bool
 
 	for {
+
 		line, isPrefix, err := reader.ReadLine()
 		switch {
 		case err == io.EOF:
@@ -1210,32 +1213,24 @@ func (c *Client) logStderr(name string, r io.Reader) {
 			// string prefixes
 			switch line := string(line); {
 			case strings.HasPrefix(line, "[TRACE]"):
-				panic = false
 				l.Trace(line)
 			case strings.HasPrefix(line, "[DEBUG]"):
-				panic = false
 				l.Debug(line)
 			case strings.HasPrefix(line, "[INFO]"):
-				panic = false
 				l.Info(line)
 			case strings.HasPrefix(line, "[WARN]"):
-				panic = false
 				l.Warn(line)
 			case strings.HasPrefix(line, "[ERROR]"):
-				panic = false
 				l.Error(line)
-			case strings.HasPrefix(line, "panic:"):
-				panic = true
+			case strings.HasPrefix(line, "panic: ") || strings.HasPrefix(line, "fatal error: "):
+				inPanic = true
+				fallthrough
+			case inPanic:
 				l.Error(line)
 			default:
-				if panic {
-					l.Error(line)
-				} else {
-					l.Debug(line)
-				}
+				l.Debug(line)
 			}
 		} else {
-			panic = false
 			out := flattenKVPairs(entry.KVPairs)
 
 			out = append(out, "timestamp", entry.Timestamp.Format(hclog.TimeFormat))
